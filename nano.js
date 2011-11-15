@@ -26,18 +26,31 @@
  * that is built on top of mikeals/request
  *
  * no more, no less
- * be creative. be silly. have fun! relax (and don't forget to compact).
+ * be creative. be silly. have fun! relax!
  *
  * dinosaurs spaceships!
  */
 nano = function database_module(cfg) {
   var public_functions = {}, path, db;
 
+  // find out if we are in verbose mode
   if (cfg && cfg.verbose) { nano.fn.set_verbose(cfg.verbose); }
+  // string gets converted into a uri if file couldn't be required (nodejs)
+  // objects are left alone
+  // if uri is missing after all of this we add default_uri and console.error
+  //   the error  
   cfg  = nano.fn.check_cfg(cfg);
+
+  // use proxy if the user requests so, nodejs only
   if (cfg.proxy)   { nano.fn.set_proxy(cfg.proxy); }
 
+  // log the configuration file if we are in testing mode
   nano.fn.verbose(cfg);
+  
+  // parse the url
+  // this allow us to discover if the user is looking for a nano object
+  // or a database object, e.g. http://somehostname.org/database would yield
+  // a database object
   path = nano.fn.url_parse(cfg.url);
 
  /****************************************************************************
@@ -67,7 +80,8 @@ nano = function database_module(cfg) {
   *        {opts.doc:string:optional} document name
   *        {opts.att:string:optional} attachment name
   *        {opts.content_type:string:optional} content type, default to json
-  *        {opts.body:object|string|binary:optional} document or attachment body
+  *        {opts.body:object|string|binary:optional} document or 
+  *          attachment body
   *        {opts.encoding:string:optional} encoding for attachments
   * @param {callback:function:optional} function to call back
   */
@@ -81,60 +95,81 @@ nano = function database_module(cfg) {
         , params  = opts.params
         , status_code
         , parsed
-        , rh;
-      if(opts.path) {
-        req.uri += "/" + opts.path;
-      }
+        , rh
+        ;
+      // if there's a path simply use it
+      if(opts.path) { req.uri += "/" + opts.path; }
+      // else if there is a doc
       else if(opts.doc)  {
+        // and its not a design document
         if(!/^_design/.test(opts.doc)) {
+          // add the encoded uri component to the uri
           req.uri += "/" + encodeURIComponent(opts.doc);
         }
+        // design documents dont get uri encoded
         else {
           req.uri += "/" + opts.doc;
         }
+        // finally if there's an attachment add it to the uri
         if(opts.att) { req.uri += "/" + opts.att; }
       }
+      // extra steps for encodings, excludes pipe cause pipe handles
+      // this for us
       if(opts.encoding && callback) {
+        // set the encoding
         req.encoding = opts.encoding;
+        // undo headers set on the top
         delete req.headers["content-type"];
         delete req.headers.accept;
       }
+      // if content type was provided
       if(opts.content_type) {
+        // set the content type
         req.headers["content-type"] = opts.content_type;
-        delete req.headers.accept; // undo headers set
+        // undo headers set on the top
+        delete req.headers.accept;
       }
-      if(cfg.cookie){
-        req.headers.cookie = cfg.cookie;
-      }
+      // cookie support is in review
+      if(cfg.cookie){ req.headers.cookie = cfg.cookie; }
       if(!nano.fn.is_empty(params)) {
         ['startkey', 'endkey', 'key'].forEach(function (key) {
-          if (key in params) { 
+          if (key in params) {
             params[key] = nano.fn.JSON.stringify(params[key]);
           }
         });
+        // add uri encoded params to the uri
         req.uri += "?" + nano.fn.qs_encode(params);
       }
-      if(!callback) { return nano.fn.request(req); } // void callback, pipe
+      // no callback, pipe. browser, no callback? fu -- for now
+      if(!callback) { return nano.fn.request(req); }
       if(opts.body) { nano.fn.set_body(req,opts.body); }
+      // log the request if we are in verbose mode
       nano.fn.verbose(req);
+      // do our request
       nano.fn.request(req, function(e,h,b) {
         rh = (h && h.headers || {});
         rh['status-code'] = status_code = (h && h.statusCode || 500);
+        // socket error if connection couldn't be established
         if(e) { 
           return callback(nano.err.request(e,"socket",req,status_code),b,rh);
         }
+        // prevent security exploits against couchdb
         delete rh.server;
+        // some bugs were setting content-length + 1 in couch, this fixes it
         delete rh['content-length'];
+        // try to get the body, json if possible, else just raw body
         try { parsed = nano.fn.JSON.parse(b); } catch (err) { parsed = b; }
+        // 200 status codes means no error
         if (status_code >= 200 && status_code < 300) {
-          if (rh['set-cookie']){
-            cfg.cookie = rh['set-cookie'];
-          }
+          // set cookie, in review...
+          if (rh['set-cookie']){ cfg.cookie = rh['set-cookie']; }
+          // respond to the user
           callback(null,parsed,rh);
         }
         else { // proxy the error directly from couchdb
+          // verbose log the error
           nano.fn.verbose(parsed);
-          callback( 
+          callback(
             nano.err.couch(parsed.reason,parsed.error,req,status_code),
             parsed,rh);
         }
@@ -640,15 +675,201 @@ nano = function database_module(cfg) {
    , couch    : function (e,c,r,s) { return gen_err('couch',e,c,r,s);    }
    };
 
+// ============================================================= externals ~==
+var QS = (function () {
+  // Copyright Joyent, Inc. and other Node contributors.
+  //
+  // Permission is hereby granted, free of charge, to any person obtaining a
+  // copy of this software and associated documentation files (the
+  // "Software"), to deal in the Software without restriction, including
+  // without limitation the rights to use, copy, modify, merge, publish,
+  // distribute, sublicense, and/or sell copies of the Software, and to permit
+  // persons to whom the Software is furnished to do so, subject to the
+  // following conditions:
+  //
+  // The above copyright notice and this permission notice shall be included
+  // in all copies or substantial portions of the Software.
+  //
+  // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+  // OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+  // MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+  // NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+  // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+  // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+  // USE OR OTHER DEALINGS IN THE SOFTWARE.
+  
+  // Query String Utilities
+  
+  var QueryString = {};
+  var urlDecode = process.binding('http_parser').urlDecode;
+  
+  // If obj.hasOwnProperty has been overridden, then calling
+  // obj.hasOwnProperty(prop) will break.
+  // See: https://github.com/joyent/node/issues/1707
+  function hasOwnProperty(obj, prop) {
+    return Object.prototype.hasOwnProperty.call(obj, prop);
+  }
+  
+  function charCode(c) {
+    return c.charCodeAt(0);
+  }
+  
+  
+  // a safe fast alternative to decodeURIComponent
+  QueryString.unescapeBuffer = function(s, decodeSpaces) {
+    var out = new Buffer(s.length);
+    var state = 'CHAR'; // states: CHAR, HEX0, HEX1
+    var n, m, hexchar;
+  
+    for (var inIndex = 0, outIndex = 0; inIndex <= s.length; inIndex++) {
+      var c = s.charCodeAt(inIndex);
+      switch (state) {
+        case 'CHAR':
+          switch (c) {
+            case charCode('%'):
+              n = 0;
+              m = 0;
+              state = 'HEX0';
+              break;
+            case charCode('+'):
+              if (decodeSpaces) c = charCode(' ');
+              // pass thru
+            default:
+              out[outIndex++] = c;
+              break;
+          }
+          break;
+  
+        case 'HEX0':
+          state = 'HEX1';
+          hexchar = c;
+          if (charCode('0') <= c && c <= charCode('9')) {
+            n = c - charCode('0');
+          } else if (charCode('a') <= c && c <= charCode('f')) {
+            n = c - charCode('a') + 10;
+          } else if (charCode('A') <= c && c <= charCode('F')) {
+            n = c - charCode('A') + 10;
+          } else {
+            out[outIndex++] = charCode('%');
+            out[outIndex++] = c;
+            state = 'CHAR';
+            break;
+          }
+          break;
+  
+        case 'HEX1':
+          state = 'CHAR';
+          if (charCode('0') <= c && c <= charCode('9')) {
+            m = c - charCode('0');
+          } else if (charCode('a') <= c && c <= charCode('f')) {
+            m = c - charCode('a') + 10;
+          } else if (charCode('A') <= c && c <= charCode('F')) {
+            m = c - charCode('A') + 10;
+          } else {
+            out[outIndex++] = charCode('%');
+            out[outIndex++] = hexchar;
+            out[outIndex++] = c;
+            break;
+          }
+          out[outIndex++] = 16 * n + m;
+          break;
+      }
+    }
+  
+    // TODO support returning arbitrary buffers.
+  
+    return out.slice(0, outIndex - 1);
+  };
+  
+  
+  QueryString.unescape = function(s, decodeSpaces) {
+    return QueryString.unescapeBuffer(s, decodeSpaces).toString();
+  };
+  
+  
+  QueryString.escape = function(str) {
+    return encodeURIComponent(str);
+  };
+  
+  var stringifyPrimitive = function(v) {
+    switch (typeof v) {
+      case 'string':
+        return v;
+  
+      case 'boolean':
+        return v ? 'true' : 'false';
+  
+      case 'number':
+        return isFinite(v) ? v : '';
+  
+      default:
+        return '';
+    }
+  };
+  
+  
+  QueryString.stringify = QueryString.encode = function(obj, sep, eq, name) {
+    sep = sep || '&';
+    eq = eq || '=';
+    obj = (obj === null) ? undefined : obj;
+  
+    if (typeof obj === 'object') {
+      return Object.keys(obj).map(function(k) {
+        if (Array.isArray(obj[k])) {
+          return obj[k].map(function(v) {
+            return QueryString.escape(stringifyPrimitive(k)) +
+                   eq +
+                   QueryString.escape(stringifyPrimitive(v));
+          }).join(sep);
+        } else {
+          return QueryString.escape(stringifyPrimitive(k)) +
+                 eq +
+                 QueryString.escape(stringifyPrimitive(obj[k]));
+        }
+      }).join(sep);
+    } else {
+      if (!name) return '';
+      return QueryString.escape(stringifyPrimitive(name)) + eq +
+             QueryString.escape(stringifyPrimitive(obj));
+    }
+  };
+  
+  // Parse a key=val string.
+  QueryString.parse = QueryString.decode = function(qs, sep, eq) {
+    sep = sep || '&';
+    eq = eq || '=';
+    var obj = {};
+  
+    if (typeof qs !== 'string' || qs.length === 0) {
+      return obj;
+    }
+  
+    qs.split(sep).forEach(function(kvp) {
+      var x = kvp.split(eq);
+      var k = QueryString.unescape(x[0], true);
+      var v = QueryString.unescape(x.slice(1).join(eq), true);
+  
+      if (!hasOwnProperty(obj, k)) {
+        obj[k] = v;
+      } else if (!Array.isArray(obj[k])) {
+        obj[k] = [obj[k], v];
+      } else {
+        obj[k].push(v);
+      }
+    });
+  
+    return obj;
+  };
+  return QueryString;
+})();
 // =============================================================== exports ~==
-nano.fn = {};
+nano.fn = {qs_encode: QS.encode};
 if (typeof exports !== 'undefined') { // nodejs
   nano.platform     = { name: "node.js", version: process.version };
   nano.version      = JSON.parse(
     require('fs').readFileSync(__dirname + "/package.json")).version;
   nano.path         = __dirname;
   nano.fn.request   = require('request');
-  nano.fn.qs_encode = require('querystring').stringify;
   nano.fn.is_empty  = require('underscore').isEmpty;
   nano.fn.url_parse = require('url').parse;
   nano.fn.err       = console.error;
@@ -692,6 +913,9 @@ if (typeof exports !== 'undefined') { // nodejs
   }
   exports.nano = nano;
 } else { // browser
+  // browser detection is possible in the future
+  nano.platform     = { name: "browser" };
+  nano.version      = "0.9.5";
   if (typeof define === 'function' && define.amd) {
     define('nano', function() { return nano; });
   } 
