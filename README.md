@@ -27,6 +27,8 @@ Now it's time to begin doing real work with Cloudant and Node.js.
 Initialize your Cloudant connection by supplying your *account* and *password*, and supplying a callback function to run when eveything is ready.
 
 ~~~ js
+var Cloudant = require('cloudant')
+
 var me = 'jhs' // Set this to your own account
 var password = process.env.cloudant_password
 
@@ -67,6 +69,44 @@ The `.ping()` call is for clarity. In fact, when you initialize your conneciton,
 
 To use this code as-is, you must first type ` export cloudant_password="<whatever>"` in your shell. This is inconvenient, and you can invent your own alternative technique;
 
+Here is simple but complete example of working with data:
+
+~~~ js
+var Cloudant = require('Cloudant')
+
+var me = 'jhs' // Set this to your own account
+var password = process.env.cloudant_password
+
+Cloudant({account:"me", password:password}, function(er, cloudant) {
+  if (er)
+    return console.log('Error connecting to Cloudant account %s: %s', me, er.message)
+
+  // Clean up the database we created previously.
+  Cloudant.db.destroy('alice', function() {
+    // Create a new database.
+    Cloudant.db.create('alice', function() {
+      // specify the database we are going to use
+      var alice = Cloudant.use('alice')
+      // and insert a document in it
+      alice.insert({ crazy: true }, 'rabbit', function(err, body, header) {
+        if (err)
+          return console.log('[alice.insert] ', err.message)
+
+        console.log('you have inserted the rabbit.')
+        console.log(body)
+      })
+    })
+  })
+})
+~~~
+
+If you run this example, you will see:
+
+    you have inserted the rabbit.
+    { ok: true,
+      id: 'rabbit',
+      rev: '1-6e4cb465d49c0368ac3946506d26335d' }
+
 ### Security Note
 
 **DO NOT hard-code your password and commit it to Git**. Storing your password directly in your source code (even in old, long-deleted commits) is a serious security risk to your data. Whoever gains access to your software will now also have access read, write, and delete permission to your data. Think about GitHub security bugs, or contractors, or disgruntled employees, or lost laptops at a conference. If you check in your password, all of these situations become major liabilities. (Also, note that if you follow these instructions, the `export` command with your password will likely be in your `.bash_history` now, which is kind of bad. However, if you input a space before typing the command, it will not be stored in your history.)
@@ -80,6 +120,7 @@ To use this code as-is, you must first type ` export cloudant_password="<whateve
 ## API Reference
 
 - [Initialization](#initialization)
+- [Callback Signature](#callback-signature)
 - [tutorials & screencasts](#tutorials-examples-in-the-wild--screencasts)
 - [configuration](#configuration)
 - [database functions](#database-functions)
@@ -131,104 +172,46 @@ To use Cloudant, require this package in your code, and run the function with yo
 ~~~ js
 var Cloudant = require('cloudant')
 
+// Connect to Cloudant.
 Cloudant({account:me, password:password}, function(er, cloudant) {
   if (er)
     return console.log('Error connecting to Cloudant account %s: %s', me, er.message)
 
   console.log('Connected to cloudant')
+
+  // Place the rest of your code here.
+
+})
 ~~~
 
-to create a new database:
+### Callback Signature
 
-~~~ js
-Cloudant.db.create('alice');
-~~~
-
-and to use it:
-
-~~~ js
-var alice = Cloudant.db.use('alice');
-~~~
-
-in this examples we didn't specify a `callback` function, the absence of a
-callback means _"do this, ignore what happens"_.
-in `Cloudant` the callback function receives always three arguments:
+After initialization, in general, callback functions receive three arguments:
 
 * `err` - the error, if any
 * `body` - the http _response body_ from couchdb, if no error.
   json parsed body, binary for non json responses
 * `header` - the http _response header_ from couchdb, if no error
 
+### Configuration
 
-a simple but complete example using callbacks is:
-
-~~~ js
-var Cloudant = require('Cloudant')('http://localhost:5984');
-
-// clean up the database we created previously
-Cloudant.db.destroy('alice', function() {
-  // create a new database
-  Cloudant.db.create('alice', function() {
-    // specify the database we are going to use
-    var alice = Cloudant.use('alice');
-    // and insert a document in it
-    alice.insert({ crazy: true }, 'rabbit', function(err, body, header) {
-      if (err) {
-        console.log('[alice.insert] ', err.message);
-        return;
-      }
-      console.log('you have inserted the rabbit.')
-      console.log(body);
-    });
-  });
-});
-~~~
-
-if you run this example(after starting couchdb) you will see:
-
-    you have inserted the rabbit.
-    { ok: true,
-      id: 'rabbit',
-      rev: '1-6e4cb465d49c0368ac3946506d26335d' }
-
-you can also see your document in [futon](http://localhost:5984/_utils).
-
-## configuration
-
-configuring Cloudant to use your database server is as simple as:
-
-~~~ js
-var Cloudant   = require('Cloudant')('http://localhost:5984')
-  , db     = Cloudant.use('foo')
-  ;
-~~~
-
-however if you don't need to instrument database objects you can simply:
+To specify configuration options, can pass an object literal to the `Cloudant` function.
 
 ~~~ js
 // Cloudant parses the url and knows this is a database
-var db = require('Cloudant')('http://localhost:5984/foo');
+var Cloudant = require('Cloudant')
+var options =
+  { "account"         : "my_account"
+  , "password"        : "secret"
+  , "request_defaults": { "proxy": "http://localhost:8080" }
+  , "log"             : function(id, args) { console.log(id, args) }
+  }
+
+Cloudant(options, function(err, cloudant) {
+  // Now using the HTTP proxy, and a custom log function.
+})
 ~~~
 
-you can also pass options to the require:
-
-~~~ js
-// Cloudant parses the url and knows this is a database
-var db = require('Cloudant')('http://localhost:5984/foo');
-~~~
-
-to specify further configuration options you can pass an object literal instead:
-
-~~~ js
-// Cloudant parses the url and knows this is a database
-var db = require('Cloudant')(
-  { "url"             : "http://localhost:5984/foo"
-  , "request_defaults" : { "proxy" : "http://someproxy" }
-  , "log"             : function (id, args) {
-      console.log(id, args);
-    }
-  });
-~~~
 Please check [request] for more information on the defaults. They support features like cookie jar, proxies, ssl, etc.
 
 ### pool size and open sockets
